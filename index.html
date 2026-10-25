@@ -641,6 +641,25 @@
     .back-to-top{right:14px;bottom:14px;}
     .photo-ring{margin:0 auto;}
   }
+
+  /* =====================================================
+     ANIMATION PACK v3 — boot log motion + bottom-to-top reveal
+     ===================================================== */
+  #boot-log > div{animation:lineIn .5s cubic-bezier(.2,.8,.2,1) both;}
+  @keyframes lineIn{
+    0%{opacity:0;transform:translateY(16px) skewX(-6deg);filter:blur(3px);}
+    60%{opacity:1;}
+    100%{opacity:1;transform:none;filter:none;}
+  }
+  .rail-item{
+    opacity:0;transform:translateY(56px) scale(.97);filter:blur(5px);
+    transition:opacity .8s cubic-bezier(.2,.7,.2,1), transform .8s cubic-bezier(.2,.7,.2,1), filter .8s ease;
+  }
+  .rail-item.from-left{transform:translateY(56px) scale(.97);}
+  .rail-item.in-view, .rail-item.from-left.in-view{opacity:1;transform:none;filter:none;}
+  .rail-item.revealed{
+    transition:opacity .3s ease, transform .25s ease, filter .3s ease, border-color .2s, background .2s;
+  }
 </style>
 </head>
 <body>
@@ -792,7 +811,7 @@
       </div>
     </div>
     <canvas id="orbCanvas" role="img" aria-label="Interactive floating skill bubbles. The full skill list is in the cards below."></canvas>
-    <div class="orb-foot"><span id="orbInfo">hover a bubble · drag &amp; throw it · dashed outline = basic</span></div>
+    <div class="orb-foot"><span id="orbInfo">hover a bubble · drag &amp; throw it · click for a shockwave · dashed = basic</span></div>
   </div>
   <div class="skills-grid">
     <div class="skill-card">
@@ -1150,7 +1169,8 @@
       const caret = document.createElement('span');
       caret.className = 'caret';
       logEl.appendChild(caret);
-      // run once and stop — a portfolio page shouldn't keep re-typing forever
+      // keep the terminal alive: pause on the finished result, then run the suite again
+      setTimeout(function(){ logEl.innerHTML = ''; i = 0; runBoot(); }, 3800);
     }
   }
   runBoot();
@@ -1324,7 +1344,7 @@
   }, {threshold:0.1});
 
   document.querySelectorAll('section, footer').forEach(sec=>{
-    const items = sec.querySelectorAll('.sec-head, .profile-block, .case-card, .orb-wrap, .skill-card, .proj-card, .cert-row, .tl-item, .contact-term, .foot-note');
+    const items = sec.querySelectorAll('.sec-head, .profile-block, .case-card, .orb-wrap, .skill-card, .proj-card, .cert-row, .tl-item, .stat, .clink, .contact-term, .foot-note');
     items.forEach(el=>{
       el.classList.add('rail-item');
       if(el.classList.contains('cert-row') || el.classList.contains('tl-item')){
@@ -1531,7 +1551,7 @@
     const wrap = canvas.parentElement;
     const info = document.getElementById('orbInfo');
     const legend = document.getElementById('orbLegend');
-    const DEFAULT_INFO = 'hover a bubble · drag &amp; throw it · dashed outline = basic';
+    const DEFAULT_INFO = 'hover a bubble · drag &amp; throw it · click for a shockwave · dashed = basic';
     const TAU = Math.PI * 2;
 
     const CATS = {
@@ -1558,6 +1578,7 @@
 
     let W = 0, H = 0, dpr = 1, S = 1;
     let balls = [];
+    let dust = [], ripples = [], flowT = 0, downInfo = null;
     let active = 'all';
     let hover = null, drag = null;
     const ptr = {x:-999, y:-999, in:false};
@@ -1599,10 +1620,11 @@
           y: prev ? Math.min(Math.max(prev.y, r), H - r) : 0,
           vx: prev ? prev.vx : (Math.random() - .5) * 1.2,
           vy: prev ? prev.vy : (Math.random() - .5) * 1.2,
-          appear: prev ? prev.appear : 0, a: prev ? prev.a : 1, pop: 1, delay: i * 38
+          appear: prev ? prev.appear : 0, a: prev ? prev.a : 1, pop: 1, ph: prev ? prev.ph : Math.random() * TAU, delay: i * 38
         };
         return b;
       });
+      dust = Array.from({length:46}, function(){ return {x:Math.random()*W, y:Math.random()*H, vx:(Math.random()-.5)*.16, vy:-.05-Math.random()*.2, s:Math.random()*1.8+.6, a:Math.random()*.5+.15, p:Math.random()*TAU}; });
       if(!old.length) scatter();
     }
 
@@ -1622,11 +1644,13 @@
     }
 
     function step(dt, drift){
+      const cen = {};
+      for(const q of balls){ const o = cen[q.cat] || (cen[q.cat] = {x:0, y:0, n:0}); o.x += q.x; o.y += q.y; o.n++; }
       for(const b of balls){
         if(b === drag) continue;
         if(drift){
-          b.vx += (Math.random() - .5) * 0.05 * dt;
-          b.vy += (Math.random() - .5) * 0.05 * dt;
+          b.vx += Math.sin(flowT * 0.0007 + b.y * 0.012 + b.ph) * 0.02 * dt;
+          b.vy += Math.cos(flowT * 0.0006 + b.x * 0.012 + b.ph * 1.3) * 0.02 * dt;
         }
         if(ptr.in && !drag){
           const dx = b.x - ptr.x, dy = b.y - ptr.y, d = Math.hypot(dx, dy);
@@ -1651,16 +1675,22 @@
         for(let j = i + 1; j < balls.length; j++){
           const A = balls[i], B = balls[j];
           let dx = B.x - A.x, dy = B.y - A.y;
-          const min = A.r + B.r + 2;
-          if(Math.abs(dx) > min || Math.abs(dy) > min) continue;
+          const min = A.r + B.r + 2, soft = min + 46 * S;
+          if(Math.abs(dx) > soft || Math.abs(dy) > soft) continue;
           let d = Math.hypot(dx, dy);
-          if(d >= min) continue;
+          if(d >= soft) continue;
           if(d < 0.001){ dx = 1; dy = 0; d = 1; }
           const nx = dx / d, ny = dy / d;
           const imA = A === drag ? 0 : 1 / (A.r * A.r);
           const imB = B === drag ? 0 : 1 / (B.r * B.r);
           const sum = imA + imB;
           if(!sum) continue;
+          if(d >= min){   // personal space: bubbles gently float apart before touching
+            const f = (1 - (d - min) / (soft - min)) * 0.07 * dt;
+            A.vx -= nx * f * (imA / sum); A.vy -= ny * f * (imA / sum);
+            B.vx += nx * f * (imB / sum); B.vy += ny * f * (imB / sum);
+            continue;
+          }
           const overlap = min - d;
           A.x -= nx * overlap * (imA / sum); A.y -= ny * overlap * (imA / sum);
           B.x += nx * overlap * (imB / sum); B.y += ny * overlap * (imB / sum);
@@ -1678,48 +1708,116 @@
 
     function draw(now){
       ctx.clearRect(0, 0, W, H);
+      const filterOn = active !== 'all';
+
+      // drifting star-dust for depth
+      for(const d of dust){
+        if(running){ d.x += d.vx; d.y += d.vy; if(d.y < -2) d.y = H + 2; if(d.x < -2) d.x = W + 2; if(d.x > W + 2) d.x = -2; }
+        ctx.fillStyle = 'rgba(231,237,234,' + (d.a * (0.45 + 0.55 * Math.sin(now * 0.002 + d.p))).toFixed(3) + ')';
+        ctx.fillRect(d.x, d.y, d.s, d.s);
+      }
+
+      // soft constellation lines between neighbours of the same family
+      ctx.lineWidth = 1;
+      for(let i = 0; i < balls.length; i++){
+        const A = balls[i];
+        if(A.appear < 0.9 || A.a < 0.5) continue;
+        for(let j = i + 1; j < balls.length; j++){
+          const B = balls[j];
+          if(B.cat !== A.cat || B.appear < 0.9 || B.a < 0.5) continue;
+          const d = Math.hypot(A.x - B.x, A.y - B.y), max = A.r + B.r + 110 * S;
+          if(d < max){
+            ctx.strokeStyle = 'rgba(' + CATS[A.cat].c + ',' + (0.30 * (1 - d / max)).toFixed(3) + ')';
+            ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+          }
+        }
+      }
+
+      // click shockwaves
+      for(let k = ripples.length - 1; k >= 0; k--){
+        const r = ripples[k], age = (now - r.t0) / 800;
+        if(age >= 1){ ripples.splice(k, 1); continue; }
+        ctx.strokeStyle = 'rgba(' + r.c + ',' + ((1 - age) * 0.55).toFixed(3) + ')';
+        ctx.lineWidth = 2.2 * (1 - age) + 0.4;
+        ctx.beginPath(); ctx.arc(r.x, r.y, 20 + age * 240 * S, 0, TAU); ctx.stroke();
+      }
+
       for(const b of balls){
         if(started && b.appear < 1){
-          const t = Math.max(0, Math.min(1, (now - startT - 350 - b.delay) / 520));
+          const t = Math.max(0, Math.min(1, (now - startT - 350 - b.delay) / 620));
           b.appear = t > 0 ? easeOutBack(t) : 0;
           if(t >= 1) b.appear = 1;
         }
-        const filterOn = active !== 'all';
         const match = !filterOn || b.cat === active;
-        b.a += ((match ? 1 : 0.16) - b.a) * 0.14;
-        const popT = (b === hover ? 1.1 : (filterOn && match ? 1.07 : 1));
+        b.a += ((match ? 1 : 0.14) - b.a) * 0.14;
+        const popT = (b === hover ? 1.12 : (filterOn && match ? 1.08 : 1));
         b.pop += (popT - b.pop) * 0.2;
         const sc = Math.max(0.001, b.appear * b.pop);
-        const c = CATS[b.cat].c;
+        const c = CATS[b.cat].c, r = b.r;
+        const pulse = 0.5 + 0.5 * Math.sin(now * 0.0022 + b.ph);
+        const isHot = (b === hover) || (filterOn && match);
+
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.scale(sc, sc);
         ctx.globalAlpha = Math.max(0, Math.min(1, b.a * Math.min(1, b.appear * 1.6)));
-        const g = ctx.createRadialGradient(-b.r*.35, -b.r*.4, b.r*.08, 0, 0, b.r);
-        g.addColorStop(0, 'rgba(' + c + ',0.55)');
-        g.addColorStop(1, 'rgba(' + c + ',0.10)');
-        ctx.beginPath(); ctx.arc(0, 0, b.r, 0, TAU);
-        ctx.fillStyle = g;
-        if(b === hover || (filterOn && match)){ ctx.shadowColor = 'rgba(' + c + ',0.9)'; ctx.shadowBlur = 20; }
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.lineWidth = b === hover ? 2 : 1.4;
-        ctx.strokeStyle = 'rgba(' + c + ',' + (b === hover ? 1 : 0.8) + ')';
+
+        // breathing outer glow
+        const gr = r * (1.45 + 0.12 * pulse + (isHot ? 0.18 : 0));
+        const og = ctx.createRadialGradient(0, 0, r * 0.65, 0, 0, gr);
+        og.addColorStop(0, 'rgba(' + c + ',' + (0.26 + 0.14 * pulse + (isHot ? 0.2 : 0)).toFixed(3) + ')');
+        og.addColorStop(1, 'rgba(' + c + ',0)');
+        ctx.fillStyle = og; ctx.beginPath(); ctx.arc(0, 0, gr, 0, TAU); ctx.fill();
+
+        // dark core so the label is always readable
+        ctx.fillStyle = 'rgba(13,19,22,0.92)';
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+
+        // glossy colour sphere
+        const body = ctx.createRadialGradient(-r * 0.38, -r * 0.45, r * 0.04, 0, 0, r);
+        body.addColorStop(0, 'rgba(255,255,255,0.55)');
+        body.addColorStop(0.16, 'rgba(' + c + ',0.88)');
+        body.addColorStop(0.62, 'rgba(' + c + ',0.40)');
+        body.addColorStop(1, 'rgba(' + c + ',0.14)');
+        ctx.fillStyle = body; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+
+        // gradient rim
+        const rim = ctx.createLinearGradient(-r, -r, r, r);
+        rim.addColorStop(0, 'rgba(' + c + ',1)');
+        rim.addColorStop(1, 'rgba(' + c + ',0.28)');
+        ctx.lineWidth = isHot ? 2.2 : 1.6; ctx.strokeStyle = rim;
         ctx.setLineDash(b.basic ? [4, 3] : []);
-        ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = '#E7EDEA';
-        ctx.font = '600 ' + b.fs + 'px "JetBrains Mono", ui-monospace, monospace';
+
+        // orbiting spark on active / hovered bubbles
+        if(isHot){
+          const an = now * 0.003 + b.ph;
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.shadowColor = 'rgba(' + c + ',1)'; ctx.shadowBlur = 12;
+          ctx.beginPath(); ctx.arc(Math.cos(an) * (r + 6), Math.sin(an) * (r + 6), 2.2, 0, TAU); ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+
+        // glass highlight
+        ctx.fillStyle = 'rgba(255,255,255,0.20)';
+        ctx.beginPath(); ctx.ellipse(-r * 0.30, -r * 0.52, r * 0.36, r * 0.17, -0.55, 0, TAU); ctx.fill();
+
+        // label
+        ctx.font = '700 ' + b.fs + 'px "JetBrains Mono", ui-monospace, monospace';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         const lh = b.fs * 1.18, off = -(b.lines.length - 1) * lh / 2;
-        b.lines.forEach((t, i) => ctx.fillText(t, 0, off + i * lh));
+        ctx.shadowColor = 'rgba(0,0,0,0.75)'; ctx.shadowBlur = 4;
+        ctx.fillStyle = '#F4F8F6';
+        b.lines.forEach(function(t, i){ ctx.fillText(t, 0, off + i * lh + 0.5); });
+        ctx.shadowBlur = 0;
         ctx.restore();
       }
     }
 
     function frame(now){
       if(!running) return;
-      const dt = Math.min(2.2, (now - last) / 16.67 || 1); last = now;
+      const dt = Math.min(2.2, (now - last) / 16.67 || 1); last = now; flowT = now;
       if(drag){
         const nx = drag.x + (ptr.x - drag.x) * 0.5, ny = drag.y + (ptr.y - drag.y) * 0.5;
         drag.vx = (nx - drag.x) / dt; drag.vy = (ny - drag.y) / dt;
@@ -1767,13 +1865,26 @@
       setPtr(e);
       const b = pick(ptr.x, ptr.y);
       if(b){
-        drag = b; hover = b; setInfo(b);
+        drag = b; hover = b; setInfo(b); downInfo = {x:ptr.x, y:ptr.y, t:performance.now()};
         canvas.style.cursor = 'grabbing';
         try{ canvas.setPointerCapture(e.pointerId); }catch(_){}
       }
     });
+    function shock(b){
+      const now = performance.now();
+      ripples.push({x:b.x, y:b.y, t0:now, c:CATS[b.cat].c});
+      const R = 270 * S;
+      balls.forEach(function(o){
+        if(o === b) return;
+        const dx = o.x - b.x, dy = o.y - b.y, d = Math.hypot(dx, dy);
+        if(d < R && d > 0.1){ const f = (1 - d / R) * 6.5; o.vx += dx / d * f; o.vy += dy / d * f; }
+      });
+    }
     function release(){
       if(drag){
+        const moved = downInfo ? Math.hypot(ptr.x - downInfo.x, ptr.y - downInfo.y) : 99;
+        const quick = downInfo ? performance.now() - downInfo.t : 999;
+        if(moved < 7 && quick < 400 && !reduced) shock(drag);
         drag.vx = Math.max(-14, Math.min(14, drag.vx));
         drag.vy = Math.max(-14, Math.min(14, drag.vy));
         drag = null; canvas.style.cursor = hover ? 'grab' : 'default';
@@ -1880,5 +1991,25 @@
 })();
 </script>
 
+<script>
+/* ---- v3: reveal each block when it scrolls into view (bottom -> top, one by one) ---- */
+(function(){
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(typeof railIO !== 'undefined') railIO.disconnect();
+  const els = Array.prototype.slice.call(document.querySelectorAll('.rail-item'));
+  const io = new IntersectionObserver(function(entries){
+    const vis = entries.filter(function(e){ return e.isIntersecting; }).map(function(e){ return e.target; });
+    vis.sort(function(a,b){ return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1; });
+    vis.forEach(function(el, k){
+      io.unobserve(el);
+      setTimeout(function(){
+        el.classList.add('in-view');
+        setTimeout(function(){ el.classList.add('revealed'); }, 950);
+      }, reduced ? 0 : k * 130);
+    });
+  }, {threshold:0.1, rootMargin:'0px 0px -2% 0px'});
+  els.forEach(function(el){ io.observe(el); });
+})();
+</script>
 </body>
 </html>
